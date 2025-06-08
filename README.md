@@ -1,4 +1,4 @@
-# Fubon Exit Monitor
+# Fubon Options Exit Bot
 
 A real-time exit monitoring script for Taiwan options using the Fubon SDK and Telegram notifications.  
 Designed for traders who need automated stop-loss, take-profit, and trailing-exit logic based on live option prices.
@@ -32,8 +32,8 @@ Designed for traders who need automated stop-loss, take-profit, and trailing-exi
 You can either clone the repo using Git (if available):
 
 ```bash
-git clone https://github.com/David-8899/FubonNeo-exit-monitor.git
-cd FubonNeo-exit-monitor
+git clone https://github.com/David-8899/FubonNeo-Options-exit-bot.git
+cd FubonNeo-Options-exit-bot
 ```
 
 Or download the project as a `.zip` file directly from the GitHub page.
