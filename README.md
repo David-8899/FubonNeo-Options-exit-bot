@@ -25,11 +25,3 @@ Designed for traders who need automated stop-loss, take-profit, and trailing-exi
 - 📉 After +18 points, if price drops by 3 from high, exit  
 - 🕒 Monitors every 3 seconds using WebSocket live data
 
----
-
-## 🛠️ Installation
-
-1. Clone this repo:
-   ```bash
-   git clone https://github.com/yourname/fubon-exit-monitor.git
-   cd fubon-exit-monitor
