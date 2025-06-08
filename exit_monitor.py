@@ -58,8 +58,170 @@ notify_timestamps = {}
 lock = threading.Lock()
 subscribed = False
 
-# ... (previous code continues unchanged)
+# === Notify with Rate Limiting ===
+def notify_limited(msg: str, sec: int = 60, mode="b", key=None):
+    now = datetime.now()
+    actual_key = key or msg
+    last_time = notify_timestamps.get(actual_key)
+    if not last_time or (now - last_time).total_seconds() >= sec:
+        if mode in ("b", "t"):
+            tele(msg)
+        if mode in ("b", "p"):
+            print(msg)
+        notify_timestamps[actual_key] = now
 
+# === Generate Option Symbol (e.g., TX410000A5) ===
+def get_option_symbol(strike_price, call_put, expiry_date, symbol_prefix):
+    month_map = {
+        "Call": ['A','B','C','D','E','F','G','H','I','J','K','L'],
+        "Put":  ['M','N','O','P','Q','R','S','T','U','V','W','X']
+    }
+    call_put_str = str(call_put).split('.')[-1]  # 'Call' or 'Put'
+    year_code = expiry_date[3]                   # '202505' -> '5'
+    month_num = int(expiry_date[4:6])            # '202505' -> 5
+    month_letter = month_map[call_put_str][month_num - 1]
+    return f"{symbol_prefix}{int(strike_price)}{month_letter}{year_code}"
+
+# === Query and List Open Positions ===
+def find_recent_entries(account):
+    try:
+        resp = sdk.futopt_accounting.query_single_position(account)
+        if not resp.is_success or not resp.data:
+            tele("⚠️ No open positions found.")
+            return []
+
+        entries = []
+        for pos in resp.data:
+            try:
+                order_no = pos.order_no or ""
+                order_prefix = order_no.split("-")[0] if "-" in order_no else order_no
+                symbol = get_option_symbol(
+                    strike_price=pos.strike_price,
+                    call_put=pos.call_put,
+                    expiry_date=pos.expiry_date,
+                    symbol_prefix=pos.symbol
+                )
+                entries.append({
+                    "symbol": symbol,
+                    "price": float(pos.price),
+                    "lots": int(pos.tradable_lot),
+                    "call_put": pos.call_put,
+                    "order_no": order_prefix,
+                    "strike": pos.strike_price,
+                    "expiry": pos.expiry_date
+                })
+            except Exception as e:
+                print(f"⚠️ Error parsing position: {e}")
+                continue
+
+        return sorted(entries, key=lambda e: e['order_no'], reverse=True)
+
+    except Exception as e:
+        tele(f"❗ Error querying positions: {e}")
+        return []
+
+# === Show Available Positions in Telegram ===
+def resume_monitor():
+    positions = find_recent_entries(account)
+    if not positions:
+        tele("📭 No available positions to monitor.")
+        return
+    msg = "📋 Available Positions:\n"
+    for idx, p in enumerate(positions, 1):
+        msg += f"{idx}. Order: {p['order_no']} ➜ Symbol: {p['symbol']} ➜ Price: {p['price']} ➜ Lots: {p['lots']} ➜ {p['call_put']}\n"
+    tele(msg)
+
+# === Place Exit Order (RangeMarket IOC) ===
+def place_exit_order(is_buy, is_entry):
+    global latest_order_no
+    if symbol is None or lots is None:
+        tele("❌ Order failed: symbol or lots not set")
+        return None
+    order = FutOptOrder(
+        buy_sell=BSAction.Buy if is_buy else BSAction.Sell,
+        symbol=symbol,
+        lot=lots,
+        price=None,
+        market_type=market_type,
+        price_type=FutOptPriceType.RangeMarket,
+        time_in_force=TimeInForce.IOC,
+        order_type=FutOptOrderType.New if is_entry else FutOptOrderType.Close,
+        user_def="py_exit"
+    )
+    resp = sdk.futopt.place_order(account, order)
+    if resp.is_success:
+        latest_order_no = resp.data.order_no
+        tele(f"✅ Order placed: {latest_order_no}")
+    else:
+        tele(f"❌ Order failed: {resp.message}")
+    return resp
+
+# === Exit Check with Trailing Logic ===
+def check_exit():
+    global is_pending, is_exit_done, latest_price, stop_price
+    global highest_price, triggered_trail, triggered_stop
+    global moved_8, moved_10, moved_12, moved_14, moved_16, moved_18
+    try:
+        with lock:
+            if is_pending or is_exit_done or symbol is None or entry_price is None or lots is None or latest_price is None:
+                return
+
+            price = latest_price
+            profit = price - entry_price
+
+        if profit <= -8 and not triggered_stop:
+            tele(f"📉 Stop loss triggered (-8): {latest_price}")
+            is_pending = True
+            triggered_stop = True
+            place_exit_order(False, False)
+            return
+
+        if profit >= 8 and not moved_8:
+            stop_price = entry_price + 6
+            moved_8 = True
+            tele(f"📌 Trail set (+8): {stop_price}")
+        if profit >= 10 and not moved_10:
+            stop_price = entry_price + 8
+            moved_10 = True
+            tele(f"📌 Trail raised (+10): {stop_price}")
+        if profit >= 12 and not moved_12:
+            stop_price = entry_price + 10
+            moved_12 = True
+            tele(f"📌 Trail raised (+12): {stop_price}")
+        if profit >= 14 and not moved_14:
+            stop_price = entry_price + 12
+            moved_14 = True
+            tele(f"📌 Trail raised (+14): {stop_price}")
+        if profit >= 16 and not moved_16:
+            stop_price = entry_price + 14
+            moved_16 = True
+            tele(f"📌 Trail raised (+16): {stop_price}")
+        if profit >= 18 and not moved_18:
+            stop_price = entry_price + 16
+            moved_18 = True
+            highest_price = latest_price
+            tele(f"🚀 Trail maxed (+18): {stop_price}, enabling high tracking")
+
+        if moved_18 and latest_price > highest_price:
+            highest_price = latest_price
+            tele(f"📈 New high: {highest_price}")
+
+        if moved_18 and latest_price <= highest_price - 3 and not triggered_trail:
+            tele(f"📉 Exit by pullback from high: High={highest_price}, Now={latest_price}")
+            is_pending = True
+            triggered_trail = True
+            place_exit_order(False, False)
+            return
+
+        if stop_price and latest_price <= stop_price:
+            tele(f"📉 Exit: price dropped below trail {stop_price}, Now={latest_price}")
+            is_pending = True
+            place_exit_order(False, False)
+            return
+
+    except Exception as e:
+        tele(f"❗ check_exit error: {e}")
+        
 # === Order Filled Callback ===
 def on_filled(code, content):
     global is_exit_done
