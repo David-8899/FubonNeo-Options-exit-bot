@@ -32,8 +32,8 @@ Designed for traders who need automated stop-loss, take-profit, and trailing-exi
 You can either clone the repo using Git (if available):
 
 ```bash
-git clone https://github.com/yourname/fubon-exit-monitor.git
-cd fubon-exit-monitor
+git clone https://github.com/David-8899/FubonNeo-exit-monitor.git
+cd FubonNeo-exit-monitor
 ```
 
 Or download the project as a `.zip` file directly from the GitHub page.
